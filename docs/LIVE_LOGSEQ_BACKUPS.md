@@ -1,18 +1,12 @@
-# Backing up while Logseq DB is running
+# SQLite backups while Logseq is running
 
-## Why the live backup times out
+## Why the source can be locked
 
-Logseq's DB version holds an **exclusive SQLite lock** on the graph's primary
-`db.sqlite`. A separate Python process may not open it while Logseq is running.
-This is a Logseq behavior, not evidence of database corruption.
+Some Logseq DB versions hold an exclusive lock on the graph's `db.sqlite`. A separate Python process may be unable to read it until Logseq quits. This is **not evidence of database corruption**. The safest way to capture the latest notes is to quit Logseq with **⌘Q** before running `bash scripts/backup.sh`.
 
-This update offers a safe fallback to Logseq's **own completed local backups**,
-which the Logseq worker can create while the application is open.
+## Optional Logseq-native fallback
 
-## Setup
-
-In your local-only `config.json`, retain your other configuration and change the
-`snapshot` section to:
+The example local `config.json` enables:
 
 ```json
 "snapshot": {
@@ -24,70 +18,29 @@ In your local-only `config.json`, retain your other configuration and change the
 }
 ```
 
-Run `bash scripts/backup.sh` with Logseq **open** and **closed**. Keep
-`git.push=false` while testing. With Logseq open, the script:
+Keep this section alongside your other `config.json` settings. On a live SQLite timeout, the backup tool can inspect completed Logseq-created `.sqlite` snapshots in `<graph>/backup/` and `<graph>/backups/`, subject to age and freshness checks. It validates the candidate SQLite copy and exports JSON from **that same staged snapshot**, never from the active database.
 
-1. Attempts the normal consistent snapshot for up to eight seconds.
-2. If SQLite is locked, looks for a Logseq-created `.sqlite` file inside
-   `<graph>/backup/` or `<graph>/backups/`.
-3. Rejects snapshots older than 120 minutes, or older than the database
-   currently published in `data/Activity/` (conservative protection against
-   regressing the backup).
-4. Verifies a standalone SQLite copy with `PRAGMA integrity_check`.
-5. Generates JSON from **that exact snapshot** with the installed Logseq CLI.
-6. Publishes both files only when conversion and validation succeed.
+A native backup may be up to the configured maximum age and **may omit your latest edits**. The script refuses a native snapshot older than the last published backup. If no sufficiently fresh validated copy exists, it fails without replacing the previous validated database/JSON. For multi-graph backup, failure of one graph stops the whole update.
 
-The command explicitly reports whether it backed up the **live** database or
-used a **Logseq native backup**. In native fallback mode, your cloud backup can
-lag your newest edits by up to the age shown in the console. This does not
-provide real-time mobile sync.
+Do not bypass a SQLite lock by copying a live `db.sqlite` with `cp`, deleting WAL/SHM files, or killing Logseq's database processes.
 
-If no qualifying native backup exists, the script reports an error, preserves
-the current `data/Activity/db.sqlite` and `data/mobile/activity.json`, and does
-not push a stale snapshot as if it were new. Wait for Logseq to generate another
-native backup, or quit Logseq and retry the command to back up the current data.
+## Validate a backup
 
-## Inspect Logseq's native backups
+From your **private** repository with Logseq closed:
 
 ```bash
-find "$HOME/logseq/graphs/Activity/backup" -maxdepth 3 -type f \
-  \( -name 'db.sqlite' -o -name '*.sqlite' \) -print
-```
-
-Your Logseq version may instead use `backups/`. The script checks both.
-
-## Validation and Git
-
-```bash
-python3 -m unittest discover -s tests -v
 bash scripts/backup.sh
-sqlite3 data/Activity/db.sqlite 'PRAGMA integrity_check;'
-git status
+python3 -m json.tool data/mobile/manifest.json
+find data -name db.sqlite -print
 ```
 
-If tests succeed, commit the code update (including previously uncommitted
-`snapshot_worker.py` from the earlier automation release) and push:
+For each backed-up graph, run `sqlite3 data/GRAPH_NAME/db.sqlite 'PRAGMA integrity_check;'`, substituting the real graph folder name (expected output: `ok`). To test restore, use a **copy** of the backed-up SQLite file in a **separate test graph**; never overwrite your live graph while testing.
 
-```bash
-git add scripts/snapshot.py scripts/snapshot_worker.py \
-  config.example.json tests/test_automation.py docs/LIVE_LOGSEQ_BACKUPS.md
-git commit -m "fix: back up Logseq from native snapshots when DB is locked"
-git push origin master
-```
+If you run with Logseq open, carefully read the log's source label (`live` versus `logseq-native-backup`) and the native backup age before assuming the backup includes your newest content.
 
-Keep `config.json` ignored by Git. A private GitHub repo is access-controlled
-but does not encrypt your notes end-to-end.
+## Limitations and privacy
 
-## Limitations
-
-- The script does not modify or stop Logseq. It cannot force an immediate fresh
-  backup from a running instance with an exclusive SQLite lock.
-- Logseq's built-in backups are normally made periodically; the fallback may
-  lag behind recently typed notes.
-- This update does not install a macOS `launchd` schedule. Verify manual runs
-  in both states before enabling scheduled backups.
-- Graph attachments are copied from `assets/` and may change independently of
-  the database; a strict full-graph point-in-time snapshot is not guaranteed
-  if attachments are being modified simultaneously.
-- If the native backup folder has a different structure, inspect its contents
-  before expanding the discovery logic.
+- Database content is validated; the copied `assets/` directory may not be perfectly synchronized with concurrent attachment changes.
+- No multi-file operation is guaranteed crash-atomic during power loss.
+- Git preserves prior revisions of notes in history; use only a **private** Git remote, with secure access and storage appropriate to your threat model.
+- The backup script does not close/restart Logseq or install a scheduler. macOS automation is an **optional separate shortcut** explained in [AUTOMATION.md](AUTOMATION.md).

@@ -1,65 +1,49 @@
-# Logseq DB EDN → Read-only JSON
+# Logseq DB EDN → read-only mobile JSON
 
-The authoritative disaster recovery backup is `data/Activity/db.sqlite` (and graph assets). `data/mobile/activity.json` is a *read-only companion export*, not a restorable Logseq database.
+The **SQLite snapshot** (`data/<GraphName>/db.sqlite`) and any assets are the restorable backup. The corresponding `data/mobile/<graph-id>.json` is a **read-only viewer export**, not a restorable database. The [README](../README.md) describes installing the CLI and running backups in your **private** Git repository.
 
-## Supported EDN formats
+## Supported export formats
 
-- Logseq desktop **`:datoms`** export, tested with desktop DB schema 65.34.
-- Published `@logseq/cli` **`:classes` / `:pages-and-blocks`** Build EDN export, tested against an actual CLI export at DB schema 65.22 (and synthetic fixture tests).
+- Desktop Logseq EDN in the **`:datoms`** shape.
+- Published npm **`@logseq/cli`** Build EDN using **`:pages-and-blocks`** and **`:classes`**.
 
-The converter automatically recognizes the two shapes. Both produce the same top-level mobile JSON keys (`schemaVersion`, `source`, `logseqSchema`, `graph`, `pageCount`, `blockCount`, `excludedSystemViewBlocks`, `pages`) and the same general page/block object structure. The `source` field identifies which format was used.
+`cli_edn_export.py` detects the installed CLI command style using `logseq --help` (or `mobile_export.cli_style: "modern"` / `"legacy"`). Both CLI styles are pointed at an **isolated staged SQLite snapshot**, not the original graph.
 
-The CLI Build EDN format frequently omits original block UUIDs, numeric DataScript IDs, and explicit page references. The converter creates deterministic *synthetic* UUIDs and negative `entityId` values for read-only navigation. These **must not** be used as Logseq IDs for editing or write-back. Synthetic identifiers use page keys and block tree positions, so inserting/reordering notes can change block IDs. Link text such as `[[Page]]` is preserved inside content, but `references` is empty for CLI Build EDN when not explicitly provided. Some advanced Logseq views, embedded content, and custom property semantics may need future viewer support.
+The converter produces `schemaVersion`, `source`, `graph`, `pageCount`, `blockCount`, `excludedSystemViewBlocks`, `logseqSchema`, and `pages`, including nested blocks and tags/classes. It excludes internal built-in views. A mobile reader can use the resulting JSON but must not write changes back into the Logseq DB.
 
-Built-in internal pages/views are excluded from user notes. Journal days are emitted as `YYYY-MM-DD` titles; tag/class pages and nested blocks are preserved. Both formats can contain sensitive notes—keep your repository private.
+**Important:** Some older CLI exports omit original block UUIDs and explicit structured references. The converter therefore creates **synthetic identifiers** based on page keys and block positions; IDs may change when content is reordered. They must not be used as stable Logseq editing IDs, and review-progress features should account for potential ID changes. Inline links are preserved as text, but CLI Build EDN may not include structured `references`.
 
-## Automated export (recommended)
+## Export and verify
 
-Install the CLI once on your MacBook:
+Install the CLI if needed:
 
 ```bash
-node --version
 npm install -g @logseq/cli
 logseq --help
 ```
 
-Your existing ignored `config.json` should contain:
-
-```json
-{
-  "source_graph_dir": "~/logseq/graphs/Activity",
-  "graph_name": "Activity",
-  "snapshot": {"include_assets": true, "max_file_mib": 95, "timeout_seconds": 30},
-  "mobile_export": {
-    "enabled": true,
-    "mode": "edn-cli",
-    "cli_command": ["logseq"],
-    "cli_style": "auto",
-    "timeout_seconds": 120,
-    "required": true
-  },
-  "git": {"enabled": true, "push": false, "remote": "origin", "branch": "master"}
-}
-```
-
-Then run:
+Quit Logseq and run the standard pipeline:
 
 ```bash
 bash scripts/backup.sh
+python3 -m json.tool data/mobile/manifest.json
 ```
 
-This creates a validated SQLite snapshot, exports Build EDN from the staged snapshot (never from your live graph), converts it, and updates the latest files *only when conversion succeeds*. The temporary EDN is removed afterwards. Only after inspecting the JSON and confirming everything works should you set `git.push=true` for off-device automatic pushing.
+If the CLI output does not match a supported EDN shape, the converter fails and **preserves previously validated backups**. Do not disable required JSON validation just to force a successful run.
 
-A sample *real* `@logseq/cli` export contained 24 journal pages, 7 user classes, 155 content blocks, and 6 internal view blocks. Counts can differ from a desktop export created at another time or schema revision. Check your actual notes rather than expecting a fixed block count.
-
-## Manual export (optional)
-
-You can still convert either EDN export on its own:
+To convert a previously exported EDN file manually (only when needed):
 
 ```bash
-python3 scripts/edn_to_json.py --input "$HOME/Downloads/activity-cli.edn" --graph Activity
+python3 scripts/edn_to_json.py --input /path/to/graph.edn \
+  --graph "Example" --output /tmp/example.json
 ```
 
-The manual command reads the EDN file you name; it does not fetch a fresh file. The automated `backup.sh` path exports a new one on every successful run.
+This manual conversion does **not** take a new SQLite snapshot. It uses the supplied EDN file. The temporary EDN used by the automated exporter is discarded after conversion. Do not commit EDN files or JSON with personal notes into the public blueprint repository.
 
-Run regression tests with `python3 -m unittest discover -s tests -v`. Tests contain synthetic notes only. The user's original EDN/database/JSON and their local `config.json` are not included with updates.
+Run regression tests with:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+Real DB schemas and CLI versions can evolve, so validate the latest JSON against actual notes before relying on automated mobile synchronization.

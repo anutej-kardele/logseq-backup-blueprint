@@ -1,64 +1,40 @@
-# Multi-graph Logseq backups for macOS
+# Multi-graph backup and mobile manifest
 
-This patch updates **only** the Mac backup repository. The Android application
-is developed separately and should consume `data/mobile/manifest.json` and the
-corresponding JSON files from the *same Git commit/ref*.
+Use the **[README](../README.md)** to install the project into **your own private Git repository**. This document describes the current multi-graph behavior; no separate patch or old update ZIP is needed.
 
-## 1. Install without erasing personal files
+## Configure graph discovery
 
-From `~/Code/Git/logseq-backup`:
-
-```bash
-unzip -o ~/Downloads/logseq-multigraph-update.zip -d .
-```
-
-The patch **does not contain** `config.json`, databases, JSON exports, or personal
-notes. Before committing, review `git diff` for script/config-template changes.
-
-## 2. Change your ignored local config
-
-**Keep your existing** `snapshot`, `mobile_export`, and `git` settings. At the top
-of `config.json`, replace the old source settings:
+Copy `config.example.json` to the ignored local `config.json` and customize the source root:
 
 ```json
-"source_graph_dir": "~/logseq/graphs/Activity",
-"graph_name": "Activity",
+{
+  "source_graphs_dir": "~/logseq/graphs",
+  "auto_discover_graphs": true,
+  "exclude_graphs": []
+}
 ```
 
-with:
+This excerpt shows the graph options only; **retain the `snapshot`, `mobile_export`, and `git` sections** from `config.example.json`. Graphs are immediate child folders containing `db.sqlite`. Non-graph folders, hidden directories, and symlinks are ignored. Use `exclude_graphs` to skip specific names. Conflicting safe IDs are rejected rather than silently overwriting a graph.
 
-```json
-"source_graphs_dir": "~/logseq/graphs",
-"auto_discover_graphs": true,
-"exclude_graphs": [],
-```
+For multi-graph mode, configure `mobile_export.enabled: true` and `mobile_export.required: true`. Do not push until local validation succeeds. An older configuration with `source_graph_dir` and `graph_name` still runs in legacy single-graph mode.
 
-Remove the trailing comma only as appropriate in your JSON document. If you
-wish to skip a graph, put its exact folder name in `exclude_graphs`, e.g.
-`["Demo"]`. File and directory names are generated from the graph folder names.
+## Output contract (schemaVersion 1)
 
-If you have `mobile_export.enabled: true`, set `required: true` to ensure that
-SQLite and mobile JSON always represent the same validated export. You can leave
-`git.push: false` for the first test; re-enable it afterward.
-
-**Do not replace your local config with `config.example.json`** unless you intend
-to reset other local settings.
-
-## 3. Output contract (v1)
-
-For graphs named `Activity` and `Demo`:
+With graphs named `Activity` and `Demo`, example output is:
 
 ```text
 data/
-  Activity/db.sqlite
-  Demo/db.sqlite
-  mobile/
-    activity.json
-    demo.json
-    manifest.json
+├── Activity/db.sqlite
+├── Demo/db.sqlite
+└── mobile/
+    ├── activity.json
+    ├── demo.json
+    └── manifest.json
 ```
 
-`data/mobile/manifest.json`:
+The names are examples, not built-in requirements. JSON filenames are derived from safe graph IDs; the SQLite graph folder keeps its original graph name.
+
+Example `data/mobile/manifest.json` (hashes and counts are illustrative):
 
 ```json
 {
@@ -71,83 +47,42 @@ data/
       "path": "data/mobile/activity.json",
       "pageCount": 31,
       "blockCount": 155,
-      "sha256": "<64-hex-digit-sha256-of-JSON-file>"
+      "sha256": "<sha256-hex-string>"
     },
     {
       "id": "demo",
       "name": "Demo",
       "file": "demo.json",
       "path": "data/mobile/demo.json",
-      "pageCount": 1,
-      "blockCount": 2,
-      "sha256": "<64-hex-digit-sha256-of-JSON-file>"
+      "pageCount": 2,
+      "blockCount": 5,
+      "sha256": "<sha256-hex-string>"
     }
   ]
 }
 ```
 
-Counts here are **illustrative**, not claimed to be your Demo graph's actual data.
-Use `id` as the stable app identity (relative to the graph folder name).
-`file` is relative to `data/mobile/`; `path` is repository-relative.
-`sha256` lets a client verify the downloaded JSON bytes. The manifest itself
-is not cryptographically signed; trust is based on your authenticated GitHub
-connection. Read the manifest and files from the **same commit SHA** to avoid
-mixing versions when a new backup push occurs during a download.
+In actual exports, `sha256` is a **64-character hexadecimal SHA-256** of the complete corresponding JSON file. `file` is relative to `data/mobile/` and `path` is relative to the repository root. A reader should fetch **the manifest and graph JSON from the same Git commit SHA** and verify each hash to avoid mixing generations. The manifest is not independently signed.
 
-`Activity` keeps its old lowercase `activity.json` path. Existing JSON schemas
-for individual graphs are unchanged.
+## Validation and failure behavior
 
-## 4. Validation and safe publication
+- SQLite snapshots are made from the source graph **without writing to it**, with a timeout. Export uses an isolated staged snapshot, not the live graph.
+- Every discovered graph's snapshot and JSON must validate before any new graph files or manifest are published. Normal filesystem publication errors trigger rollback. A sudden power loss is **not** a guaranteed multi-file atomic transaction.
+- `manifest.json` is published last. Graphs removed from the source are omitted from the new manifest but their old backup files are **not** automatically deleted.
+- No valid graphs, a failed CLI export, a stale/locked graph without a safe fallback, or colliding graph IDs will stop publication.
+- `.logseq-backup.lock` prevents concurrent runs. The lock is ignored by Git.
 
-The script discovers graph folders at one level below the source root, ignoring
-non-graph folders, hidden folders and symlinks. Graph names that would collide
-when converted to safe IDs are rejected; the `mobile` graph name is reserved
-because `data/mobile` already exists.
+## Test in a private repository
 
-Each graph is independently copied using the existing bounded SQLite snapshot
-logic, then passed to the supported Logseq CLI EDN exporter and JSON converter.
-Files are size-checked. **Every** discovered graph must pass validation before
-new data or the manifest is published. On a normal filesystem error, published
-files are rolled back to the previous state. Note: No multi-file rename system
-is guaranteed to be fully crash-atomic if the computer powers off mid-publish.
-
-The manifest is installed last. No graph files are automatically removed if a
-source graph disappears or is renamed; such old data is simply omitted from the
-new manifest. This avoids accidental data deletion. If none are discovered, the
-script refuses to publish an empty manifest.
-
-The lock file `.logseq-backup.lock` is local-only, Gitignored and held through
-Git commit/push. It prevents accidental overlapping `logpush` runs.
-
-If Logseq holds an exclusive lock on one of the source databases, quit the app
-and retry. Native backup fallback may be used only if it passes existing age
-and validation checks. A failure stops the entire multi-graph update.
-
-## 5. First run checklist
+Quit Logseq (⌘Q), then run:
 
 ```bash
-cd ~/Code/Git/logseq-backup
 python3 -m unittest discover -s tests -v
-# Close Logseq first.
 bash scripts/backup.sh
-python3 -m json.tool data/mobile/manifest.json | head -60
-sqlite3 data/Activity/db.sqlite 'PRAGMA integrity_check;'
-sqlite3 data/Demo/db.sqlite 'PRAGMA integrity_check;'
-git status
+python3 -m json.tool data/mobile/manifest.json
+find data -name db.sqlite -print
 ```
 
-Review `data/mobile/manifest.json`, `data/mobile/demo.json`, and your existing
-`data/mobile/activity.json` before allowing a push. Check that the private
-GitHub repository is still private and that local `config.json` is ignored.
+Optionally run `sqlite3 data/GRAPH_NAME/db.sqlite 'PRAGMA integrity_check;'` on each output (use your real graph folder name; result should be `ok`). Check a recently edited note in JSON, confirm your Git remote points to a **PRIVATE repository**, then set `git.push: true` in local `config.json`.
 
-To send any pending commits and code updates, commit the patch's source files
-manually, then `git push origin master` (or use `logpush` when `git.push=true`).
-
-## 6. Compatibility
-
-Local configs using the original `source_graph_dir` + `graph_name` remain in
-single-graph mode. This permits rollback without altering current stored data.
-
-The published `@logseq/cli` Build EDN exporter is used in the same way as the
-previous Activity-only version. No Android code, credentials, network servers,
-or third-party Python dependencies were added.
+Keep the data repository private: even deleted notes remain in historical commits. See [live backup caveats](LIVE_LOGSEQ_BACKUPS.md) and [EDN format notes](EDN_EXPORT.md).

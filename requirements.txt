@@ -1,12 +1,3 @@
-# Install missing developer tools with Homebrew
-brew install git python node
-
-# Install Logseq CLI
-npm install -g @logseq/cli
-
-# Verify installation
-git --version
-python3 --version
-node --version
-npm --version
-logseq --help
+# Python 3.10+ standard library only: no third-party pip dependencies.
+# Install the separate Logseq CLI with: npm install -g @logseq/cli
+# See README.md for macOS installation instructions.

@@ -2,7 +2,7 @@
 
 A macOS backup utility for **Logseq DB graphs**. One command discovers your graphs, snapshots their SQLite databases, exports mobile-readable JSON, generates `data/mobile/manifest.json`, and commits/pushes the backup to your **own private Git repository**.
 
-**Privacy:** This public repository is a source-code template. Never upload personal Logseq notes to a public repository. Deleting files later does not erase them from Git history.
+**Privacy:** This public repository is **source code only**. Copy the template into a **separate PRIVATE GitHub repository** for your actual backups. Verify that the destination says **Private** on GitHub before enabling push. Deleting a committed file later does not remove it from Git history.
 
 ## Requirements (macOS)
 
@@ -29,7 +29,7 @@ npm --version
 logseq --help
 ```
 
-**Python packages:** No third-party pip packages are required. `requirements.txt` intentionally contains comments only because the code uses Python's standard library. Running `python3 -m pip install -r requirements.txt` is optional and installs nothing. The Logseq CLI is installed via **npm**, not pip.
+**Python packages:** No third-party pip packages are required; `requirements.txt` contains comments only. The optional command `python3 -m pip install -r requirements.txt` installs nothing. Install the **Logseq CLI with npm**, not pip.
 
 ## Setup: use the blueprint inside your private Git repository
 
@@ -83,7 +83,7 @@ git commit -m "chore: install Logseq backup blueprint"
 git push -u origin main  # Replace main with your actual branch if different
 ```
 
-`config.json` is Gitignored, and the generated backup data may already have been committed by `backup.sh`.
+`config.json` is Gitignored, and the generated backup data may already have been committed by `backup.sh`. **Before the push, verify on GitHub that this destination is PRIVATE; check `git remote -v` to avoid accidentally pushing notes to the public blueprint.**
 
 Now set `git.push` to `true` in your ignored `config.json` and run:
 
@@ -133,4 +133,6 @@ data/
 
 The graph names above are examples, discovered automatically. SQLite backups are for restoring data; the JSON files are for read-only mobile applications. To verify restoration, restore a **copy** of a SQLite backup as a separate Logseq graph, never over your active graph.
 
-For manifest details and SQLite locking safeguards, see `docs/MULTIGRAPH.md` and `docs/LIVE_LOGSEQ_BACKUPS.md`.
+More details: [`docs/MULTIGRAPH.md`](docs/MULTIGRAPH.md) (manifest and graph discovery), [`docs/LIVE_LOGSEQ_BACKUPS.md`](docs/LIVE_LOGSEQ_BACKUPS.md) (locks and recovery), [`docs/EDN_EXPORT.md`](docs/EDN_EXPORT.md) (EDN/JSON compatibility), and [`docs/AUTOMATION.md`](docs/AUTOMATION.md) (optional macOS Shortcuts automation).
+
+Licensed under the [MIT License](LICENSE).
