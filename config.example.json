@@ -1,0 +1,26 @@
+{
+  "source_graphs_dir": "~/logseq/graphs",
+  "auto_discover_graphs": true,
+  "exclude_graphs": [],
+  "snapshot": {
+    "include_assets": true,
+    "max_file_mib": 95,
+    "timeout_seconds": 8,
+    "fallback_to_native_backup": true,
+    "native_backup_max_age_minutes": 120
+  },
+  "mobile_export": {
+    "enabled": true,
+    "mode": "edn-cli",
+    "cli_command": ["logseq"],
+    "cli_style": "auto",
+    "timeout_seconds": 120,
+    "required": true
+  },
+  "git": {
+    "enabled": true,
+    "push": false,
+    "remote": "origin",
+    "branch": "master"
+  }
+}

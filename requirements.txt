@@ -1,0 +1,2 @@
+# No Python dependencies: uses Python 3.10+ standard library.
+# The official Logseq DB CLI is an optional external dependency for JSON export.
