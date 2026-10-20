@@ -1,70 +1,136 @@
-# Logseq Backup
+# Logseq Backup Blueprint
 
-Back up **Logseq DB graphs** on macOS to a **private Git repository**. One command discovers all graphs, snapshots their SQLite databases, exports mobile-readable JSON, generates `data/mobile/manifest.json`, and optionally commits/pushes the result.
+A macOS backup utility for **Logseq DB graphs**. One command discovers your graphs, snapshots their SQLite databases, exports mobile-readable JSON, generates `data/mobile/manifest.json`, and commits/pushes the backup to your **own private Git repository**.
 
-**Keep the repository containing your notes PRIVATE.** This public template contains code only; Git history retains old versions of notes even if you later delete them.
+**Privacy:** This public repository is a source-code template. Never upload personal Logseq notes to a public repository. Deleting files later does not erase them from Git history.
 
-## Requirements
+## Requirements (macOS)
 
-- macOS, Git, Python 3.10+, and a Logseq **DB-version** graph (each graph has `db.sqlite`).
-- Logseq EDN CLI for JSON export: check `logseq --help`, or install Node.js and run `npm install -g @logseq/cli`.
-- An existing **private GitHub repository**, cloned to your Mac, with Git authentication set up.
+- Logseq DB graphs (for example, `~/logseq/graphs/Activity/db.sqlite`)
+- Git, Python 3.10+, Node.js/npm, and the Logseq CLI
+- Your own **empty, private** GitHub repository with Git authentication configured
 
-## Set up in your own private repository
+If needed, install developer tools using [Homebrew](https://brew.sh/):
 
-1. Create and **clone an empty PRIVATE GitHub repository**. Download this public template as a ZIP, and extract **its contents into the root of your private clone** (the folder containing `.git`). Do not use this public template's Git remote for backups.
-2. From that private repository's folder, run:
-
-   ```bash
-   cp config.example.json config.json
-   # Edit config.json for your own Mac
-   git remote -v
-   git branch --show-current
-   ```
-
-3. In `config.json`, set `source_graphs_dir` (usually `~/logseq/graphs`), set `git.branch` to your actual branch (`main` or `master`), and leave `git.push` as `false` for the first run. The remote is read from Git (`origin`), **not** a URL or token in config.
-4. Quit Logseq completely (**⌘Q**), then run:
-
-   ```bash
-   python3 -m unittest discover -s tests -v
-   bash scripts/backup.sh
-   python3 -m json.tool data/mobile/manifest.json
-   ```
-
-5. Verify your notes and JSON are correct. Change `git.push` to `true`, then run `bash scripts/backup.sh` again. The script pushes to the configured private remote and branch. Git credentials come from your existing Git setup.
-
-## Output (generated automatically)
-
-```text
-data/
-├── <GraphName>/db.sqlite       # one per discovered graph
-└── mobile/
-    ├── <graph-id>.json         # one per discovered graph
-    └── manifest.json           # graph list for the Android reader
+```bash
+brew install git python node
+npm install -g @logseq/cli
 ```
 
-Graphs are detected from subdirectories of `source_graphs_dir` containing `db.sqlite`. Existing JSON schemas and paths are unchanged. **Close Logseq before backup**: its SQLite database may be exclusively locked while the app runs. The script refuses stale or invalid snapshots rather than replacing a good backup.
+If you already use **NVM** for Node.js, keep using it rather than installing another copy of Node.
 
-## Optional `logpush` terminal shortcut (zsh)
+Verify the tools:
 
-Add this to `~/.zshrc`, replacing the path with **your private repository folder**:
+```bash
+git --version
+python3 --version
+node --version
+npm --version
+logseq --help
+```
+
+**Python packages:** No third-party pip packages are required. `requirements.txt` intentionally contains comments only because the code uses Python's standard library. Running `python3 -m pip install -r requirements.txt` is optional and installs nothing. The Logseq CLI is installed via **npm**, not pip.
+
+## Setup: use the blueprint inside your private Git repository
+
+**1.** Create an empty **private** repository on GitHub, then clone it onto your Mac:
+
+```bash
+cd ~/Code/Git
+git clone https://github.com/USERNAME/YOUR-PRIVATE-REPO.git
+cd YOUR-PRIVATE-REPO
+```
+
+**2.** Download the public blueprint and copy its contents into the root of your private clone (the folder with `.git`):
+
+```bash
+tmp="$(mktemp -d)"
+curl -fsSL https://github.com/anutej-kardele/logseq-backup-blueprint/archive/refs/heads/main.zip -o "$tmp/blueprint.zip"
+unzip -q "$tmp/blueprint.zip" -d "$tmp"
+ditto "$tmp/logseq-backup-blueprint-main" .
+rm -rf "$tmp"
+```
+
+Or download its ZIP through GitHub's **Code → Download ZIP** menu and extract the contents into the private clone.
+
+**3.** Create local configuration and inspect the private remote:
+
+```bash
+cp config.example.json config.json
+open -e config.json
+git remote -v
+git branch --show-current
+```
+
+In `config.json`, set `source_graphs_dir` (usually `~/logseq/graphs`) and set `git.branch` to your private repository's current branch (`main` or `master`). Leave `git.push` as `false` for the first test. Keep `auto_discover_graphs: true` to include all valid graphs. The Git URL and credentials are managed by **Git**; no URL or token is needed in this config.
+
+**4.** Quit Logseq completely (**⌘Q**) to release the live SQLite database. Run tests and the first local backup:
+
+```bash
+python3 -m unittest discover -s tests -v
+bash scripts/backup.sh
+python3 -m json.tool data/mobile/manifest.json
+```
+
+Confirm `data/<GraphName>/db.sqlite`, `data/mobile/<graph-id>.json`, and `data/mobile/manifest.json` are correct. You can check SQLite integrity for one graph using `sqlite3 data/Activity/db.sqlite 'PRAGMA integrity_check;'` (replace `Activity` with your graph name); the expected result is `ok`.
+
+**5.** Commit the blueprint source files to **your private repository** and enable pushes:
+
+```bash
+git status --short
+git add .
+git commit -m "chore: install Logseq backup blueprint"
+git push -u origin main  # Replace main with your actual branch if different
+```
+
+`config.json` is Gitignored, and the generated backup data may already have been committed by `backup.sh`.
+
+Now set `git.push` to `true` in your ignored `config.json` and run:
+
+```bash
+bash scripts/backup.sh
+```
+
+The backup script commits changed backup data and pushes it to the configured private remote and branch. If there are no data changes, it may report that there is nothing to commit.
+
+## Optional `logpush` command (zsh)
+
+Add this function to `~/.zshrc`, replacing the path with **your private repository's folder**:
 
 ```bash
 logpush() {
   local logfile="${TMPDIR:-/tmp/}logseq-backup.log"
-  if (cd "$HOME/Code/Git/YOUR-PRIVATE-REPO" && bash scripts/backup.sh) >"$logfile" 2>&1; then
-    return 0   # quiet on success
+  if (cd "$HOME/Code/Git/YOUR-PRIVATE-REPO" && bash scripts/backup.sh) > "$logfile" 2>&1; then
+    return 0
   else
-    cat "$logfile"  # show errors
+    cat "$logfile"
     return 1
   fi
 }
 ```
 
-Run `source ~/.zshrc`, then `logpush` from any directory. Inspect the most recent run with `cat "${TMPDIR:-/tmp/}logseq-backup.log"`.
+Then reload and run from anywhere:
 
-## Security and restoration
+```bash
+source ~/.zshrc
+logpush
+cat "${TMPDIR:-/tmp/}logseq-backup.log"
+```
 
-`config.json` is Gitignored. Never put tokens in the code or push notes to a public repository. The backed-up `db.sqlite` is the restore source; JSON is intended for read-only mobile viewing. To test recovery, restore a copied SQLite backup into a **new** Logseq graph, not your active graph.
+Success is quiet; failures print the backup log. **Quit Logseq before running `logpush`.**
 
-See `docs/MULTIGRAPH.md` for the manifest format and validation behavior, and `docs/LIVE_LOGSEQ_BACKUPS.md` for SQLite locking and fallback rules.
+## Output and restore
+
+```text
+data/
+├── Activity/db.sqlite
+├── Demo/db.sqlite
+└── mobile/
+    ├── activity.json
+    ├── demo.json
+    └── manifest.json
+```
+
+The graph names above are examples, discovered automatically. SQLite backups are for restoring data; the JSON files are for read-only mobile applications. To verify restoration, restore a **copy** of a SQLite backup as a separate Logseq graph, never over your active graph.
+
+For manifest details and SQLite locking safeguards, see `docs/MULTIGRAPH.md` and `docs/LIVE_LOGSEQ_BACKUPS.md`.

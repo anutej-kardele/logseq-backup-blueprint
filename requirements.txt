@@ -1,2 +1,12 @@
-# No Python dependencies: uses Python 3.10+ standard library.
-# The official Logseq DB CLI is an optional external dependency for JSON export.
+# Install missing developer tools with Homebrew
+brew install git python node
+
+# Install Logseq CLI
+npm install -g @logseq/cli
+
+# Verify installation
+git --version
+python3 --version
+node --version
+npm --version
+logseq --help
