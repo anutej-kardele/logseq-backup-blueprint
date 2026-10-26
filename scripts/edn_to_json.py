@@ -449,9 +449,22 @@ def compile_cli_graph(obj: dict, graph_name: str) -> dict:
             title, page_key, kind = date, 'journal:' + str(day), 'journal'
         else:
             title = page.get(':block/title')
-            if not isinstance(title, str):
-                raise ValueError('Non-journal page is missing title')
-            page_key, kind = 'page:' + title.casefold(), 'page'
+            if isinstance(title, str):
+                page_key = 'page:' + title.casefold()
+            elif ':block/title' not in page and isinstance(page.get(':block/uuid'), str):
+                # Some legacy CLI exports contain UUID-only page records with
+                # real blocks. Preserve their content rather than dropping them
+                # or aborting the entire backup. Use the full UUID for identity,
+                # and a short, visibly synthetic title for read-only viewers.
+                try:
+                    page_uuid = str(UUID(page[':block/uuid']))
+                except ValueError as exc:
+                    raise ValueError('Untitled CLI page has an invalid UUID') from exc
+                title = f'Untitled page ({page_uuid[:8]})'
+                page_key = 'page-uuid:' + page_uuid
+            else:
+                raise ValueError('Non-journal page is missing title and valid UUID')
+            kind = 'page'
         if page_key in seen_pages:
             raise ValueError(f'Duplicate page in CLI EDN: {page_key}')
         seen_pages.add(page_key)

@@ -11,6 +11,8 @@ The **SQLite snapshot** (`data/<GraphName>/db.sqlite`) and any assets are the re
 
 The converter produces `schemaVersion`, `source`, `graph`, `pageCount`, `blockCount`, `excludedSystemViewBlocks`, `logseqSchema`, and `pages`, including nested blocks and tags/classes. It excludes internal built-in views. A mobile reader can use the resulting JSON but must not write changes back into the Logseq DB.
 
+**UUID-only pages:** Some legacy CLI exports include non-journal page records with a valid `:block/uuid` but no `:block/title` or `:build/journal`. The converter preserves these records and their nested blocks with a generated `Untitled page (<UUID prefix>)` display title, retaining the supplied page UUID. Records lacking a title, journal date, or valid UUID still fail validation. This fallback does **not** resolve repeated page UUIDs elsewhere in the export; mobile readers should retain duplicate-identity validation.
+
 **Important:** Some older CLI exports omit original block UUIDs and explicit structured references. The converter therefore creates **synthetic identifiers** based on page keys and block positions; IDs may change when content is reordered. They must not be used as stable Logseq editing IDs, and review-progress features should account for potential ID changes. Inline links are preserved as text, but CLI Build EDN may not include structured `references`.
 
 ## Export and verify

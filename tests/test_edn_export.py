@@ -124,6 +124,43 @@ class EDNExportTests(unittest.TestCase):
             convert_file(src, dst, 'Activity')
             self.assertEqual(previous, dst.read_bytes())
 
+    def test_cli_uuid_only_page_preserves_real_blocks(self):
+        # Regression: legacy @logseq/cli may export a page with only a UUID
+        # and no :block/title or :build/journal, while still holding notes.
+        edn = r'''{:classes {}
+          :pages-and-blocks
+          [{:page {:block/uuid #uuid "11111111-2222-3333-4444-555555555555"}
+            :blocks [{:block/title "Retain this note"
+                      :build/children [{:block/title "Nested content"}]}]}]
+          :logseq.db.sqlite.export/export-type :graph}'''
+        with tempfile.TemporaryDirectory() as root:
+            src, dst = Path(root) / 'untitled.edn', Path(root) / 'export.json'
+            src.write_text(edn, encoding='utf-8')
+            exported = convert_file(src, dst, 'Activity')
+            self.assertEqual(exported['pageCount'], 1)
+            self.assertEqual(exported['blockCount'], 2)
+            page = exported['pages'][0]
+            self.assertEqual(page['title'], 'Untitled page (11111111)')
+            self.assertEqual(page['kind'], 'page')
+            self.assertEqual(page['uuid'], '11111111-2222-3333-4444-555555555555')
+            self.assertEqual(page['blocks'][0]['content'], 'Retain this note')
+            self.assertEqual(page['blocks'][0]['children'][0]['content'], 'Nested content')
+            first = dst.read_bytes()
+            convert_file(src, dst, 'Activity')
+            self.assertEqual(dst.read_bytes(), first)
+
+    def test_cli_missing_title_and_uuid_remains_an_error(self):
+        edn = r'''{:classes {} :pages-and-blocks
+          [{:page {} :blocks [{:block/title "Unknown page"}]}]
+          :logseq.db.sqlite.export/export-type :graph}'''
+        with tempfile.TemporaryDirectory() as root:
+            src, dst = Path(root) / 'invalid.edn', Path(root) / 'export.json'
+            src.write_text(edn, encoding='utf-8')
+            dst.write_text('previous good export', encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'missing title and valid UUID'):
+                convert_file(src, dst, 'Activity')
+            self.assertEqual(dst.read_text(encoding='utf-8'), 'previous good export')
+
     def test_cli_missing_children_are_rejected_without_overwriting_json(self):
         with tempfile.TemporaryDirectory() as root:
             src = Path(root) / 'bad.edn'
