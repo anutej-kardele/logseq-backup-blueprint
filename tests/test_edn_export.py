@@ -161,6 +161,85 @@ class EDNExportTests(unittest.TestCase):
                 convert_file(src, dst, 'Activity')
             self.assertEqual(dst.read_text(encoding='utf-8'), 'previous good export')
 
+    def test_cli_uuid_only_class_page_merges_without_losing_blocks(self):
+        # Legacy CLI exports a user class under :classes and a second UUID-only
+        # page record for that same entity. Publish one tag, retaining blocks.
+        uid = '11111111-2222-3333-4444-555555555555'
+        edn = r'''{:classes
+          {:user.class/algo-pattern
+           {:block/title "algo-pattern"
+            :block/uuid #uuid "11111111-2222-3333-4444-555555555555"}}
+          :pages-and-blocks
+          [{:page {:block/uuid #uuid "11111111-2222-3333-4444-555555555555"}
+            :blocks [{:block/title "Preserve class notes"
+                      :build/tags [:user.class/algo-pattern]
+                      :build/children [{:block/title "Nested note"}]}]}]
+          :logseq.db.sqlite.export/export-type :graph}'''
+        with tempfile.TemporaryDirectory() as root:
+            src, dst = Path(root) / 'cli.edn', Path(root) / 'activity.json'
+            src.write_text(edn, encoding='utf-8')
+            result = convert_file(src, dst, 'Activity')
+            self.assertEqual(result['pageCount'], 1)
+            self.assertEqual(result['blockCount'], 2)
+            tag = result['pages'][0]
+            self.assertEqual((tag['kind'], tag['title'], tag['uuid']),
+                             ('tag', 'algo-pattern', uid))
+            self.assertEqual(tag['blocks'][0]['content'], 'Preserve class notes')
+            self.assertEqual(tag['blocks'][0]['tags'][0]['uuid'], uid)
+            self.assertEqual(tag['blocks'][0]['children'][0]['content'], 'Nested note')
+            self.assertEqual(len({p['uuid'] for p in result['pages']}), result['pageCount'])
+            initial_bytes = dst.read_bytes()
+            convert_file(src, dst, 'Activity')
+            self.assertEqual(initial_bytes, dst.read_bytes())
+
+    def test_cli_titled_page_matching_class_uuid_merges_when_title_matches(self):
+        edn = r'''{:classes {:user.class/study
+            {:block/title "Study" :block/uuid #uuid "11111111-2222-3333-4444-555555555555"}}
+          :pages-and-blocks
+          [{:page {:block/title "Study" :block/uuid #uuid "11111111-2222-3333-4444-555555555555"}
+            :blocks [{:block/title "Class page block"}]}]
+          :logseq.db.sqlite.export/export-type :graph}'''
+        with tempfile.TemporaryDirectory() as root:
+            src, dst = Path(root) / 'cli.edn', Path(root) / 'out.json'
+            src.write_text(edn, encoding='utf-8')
+            result = convert_file(src, dst, 'Activity')
+            self.assertEqual(result['pageCount'], 1)
+            self.assertEqual(result['pages'][0]['kind'], 'tag')
+            self.assertEqual(result['blockCount'], 1)
+            self.assertEqual(result['pages'][0]['blocks'][0]['content'], 'Class page block')
+
+    def test_cli_unrelated_page_uuid_collision_still_fails_safely(self):
+        edn = r'''{:classes {}
+          :pages-and-blocks
+          [{:page {:block/title "One" :block/uuid #uuid "11111111-2222-3333-4444-555555555555"}
+            :blocks [{:block/title "A"}]}
+           {:page {:block/title "Two" :block/uuid #uuid "11111111-2222-3333-4444-555555555555"}
+            :blocks [{:block/title "B"}]}]
+          :logseq.db.sqlite.export/export-type :graph}'''
+        with tempfile.TemporaryDirectory() as root:
+            src, dst = Path(root) / 'cli.edn', Path(root) / 'out.json'
+            src.write_text(edn, encoding='utf-8')
+            dst.write_text('previous good export', encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'Duplicate page UUID'):
+                convert_file(src, dst, 'Activity')
+            self.assertEqual(dst.read_text(), 'previous good export')
+
+    def test_cli_duplicate_class_page_record_is_rejected(self):
+        edn = r'''{:classes {:user.class/study
+            {:block/title "Study" :block/uuid #uuid "11111111-2222-3333-4444-555555555555"}}
+          :pages-and-blocks
+          [{:page {:block/uuid #uuid "11111111-2222-3333-4444-555555555555"}
+            :blocks [{:block/title "First"}]}
+           {:page {:block/uuid #uuid "11111111-2222-3333-4444-555555555555"}
+            :blocks [{:block/title "Second"}]}]
+          :logseq.db.sqlite.export/export-type :graph}'''
+        with tempfile.TemporaryDirectory() as root:
+            src, dst = Path(root) / 'cli.edn', Path(root) / 'out.json'
+            src.write_text(edn, encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'appears more than once'):
+                convert_file(src, dst, 'Activity')
+            self.assertFalse(dst.exists())
+
     def test_cli_missing_children_are_rejected_without_overwriting_json(self):
         with tempfile.TemporaryDirectory() as root:
             src = Path(root) / 'bad.edn'

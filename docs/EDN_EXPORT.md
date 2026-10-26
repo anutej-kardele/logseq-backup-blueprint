@@ -49,3 +49,16 @@ python3 -m unittest discover -s tests -v
 ```
 
 Real DB schemas and CLI versions can evolve, so validate the latest JSON against actual notes before relying on automated mobile synchronization.
+
+### Duplicate class/page UUIDs in legacy CLI exports
+
+Some `@logseq/cli` exports list a class in `:classes` and also include a
+`:pages-and-blocks` entry for that **same UUID**. The page entry may lack a
+title but still carry blocks. The converter now merges that record into the
+canonical class/tag page, preserving its blocks, so each UUID appears only once
+in the mobile `pages` array. It still rejects unrelated duplicate UUIDs and
+conflicting class/page titles instead of silently dropping data.
+
+This is an exporter fix; **do not turn off duplicate-page validation in the
+Android reader**. Existing backups should be regenerated from the user's
+private repository after updating the converter.

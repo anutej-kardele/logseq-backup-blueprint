@@ -346,6 +346,7 @@ def compile_cli_graph(obj: dict, graph_name: str) -> dict:
 
     tags_by_keyword = {}
     tag_pages = []
+    class_pages_by_uuid = {}
     for keyword, klass in sorted(classes.items()):
         if not isinstance(keyword, str) or not keyword.startswith(':user.class/'):
             raise ValueError(f'Unexpected class key: {keyword!r}')
@@ -355,13 +356,17 @@ def compile_cli_graph(obj: dict, graph_name: str) -> dict:
         entity_id, uuid = identity('class:' + keyword, klass.get(':block/uuid'))
         tag_ref = {'entityId': entity_id, 'uuid': uuid, 'name': title}
         tags_by_keyword[keyword] = tag_ref
-        tag_pages.append({
+        if uuid in class_pages_by_uuid:
+            raise ValueError(f'Duplicate Logseq class UUID: {uuid}')
+        class_page = {
             'entityId': entity_id, 'uuid': uuid, 'title': title,
             'name': title.casefold(), 'kind': 'tag', 'journalDay': None,
             'createdAt': None, 'updatedAt': None,
             'tags': [], 'references': [], 'properties': properties(klass.get(':build/properties')),
             'blocks': [],
-        })
+        }
+        tag_pages.append(class_page)
+        class_pages_by_uuid[uuid] = class_page
 
     # Logseq built-in Card class does not appear in :classes. Preserve it in
     # tags even though its page is internal and should not appear in pages.
@@ -424,6 +429,7 @@ def compile_cli_graph(obj: dict, graph_name: str) -> dict:
         }
 
     seen_pages = set()
+    merged_class_uuids = set()
     for record in records:
         if not isinstance(record, dict) or not isinstance(record.get(':page'), dict):
             raise ValueError('Expected :pages-and-blocks entries with :page map')
@@ -438,6 +444,51 @@ def compile_cli_graph(obj: dict, graph_name: str) -> dict:
         if is_builtin:
             excluded_views += count_blocks(nodes)
             continue
+
+        supplied_uuid = page.get(':block/uuid')
+        normalized_uuid = None
+        if isinstance(supplied_uuid, str):
+            try:
+                normalized_uuid = str(UUID(supplied_uuid))
+            except ValueError as exc:
+                raise ValueError('CLI page has an invalid UUID') from exc
+
+        # The legacy CLI may list a user class twice: once under :classes,
+        # and again under :pages-and-blocks with just its UUID (often with
+        # actual content blocks). Both entries denote the SAME Logseq entity.
+        # Keep the canonical tag page and attach its page-level blocks instead
+        # of publishing a second page with a duplicate UUID.
+        matching_class = class_pages_by_uuid.get(normalized_uuid)
+        if matching_class is not None:
+            if ':build/journal' in page:
+                raise ValueError(f'Journal UUID conflicts with class {matching_class["title"]!r}')
+            supplied_title = page.get(':block/title')
+            if supplied_title is not None and (
+                not isinstance(supplied_title, str) or
+                supplied_title.casefold() != matching_class['title'].casefold()
+            ):
+                raise ValueError(f'CLI page UUID matches class {matching_class["title"]!r} '
+                                 'but carries a different title')
+            if normalized_uuid in merged_class_uuids:
+                raise ValueError(f'Class page UUID appears more than once in CLI pages: {normalized_uuid}')
+            merged_class_uuids.add(normalized_uuid)
+
+            # Use the same UUID-based key previously used for a UUID-only page,
+            # so its deterministic block identities do not change unnecessarily.
+            page_key = 'page-uuid:' + normalized_uuid
+            matching_class['blocks'] = [
+                build_tree(b, page_key, (i,)) for i, b in enumerate(nodes)
+            ]
+            class_properties = matching_class['properties']
+            for key, val in properties(prop_map).items():
+                if key in class_properties and class_properties[key] != val:
+                    raise ValueError(f'Conflicting properties for class {matching_class["title"]!r}: {key}')
+                class_properties[key] = val
+            matching_class['tags'] = tag_refs(page.get(':build/tags'))
+            matching_class['createdAt'] = page.get(':block/created-at')
+            matching_class['updatedAt'] = page.get(':block/updated-at')
+            continue
+
         if ':build/journal' in page:
             day = page[':build/journal']
             if not isinstance(day, int):
@@ -451,24 +502,18 @@ def compile_cli_graph(obj: dict, graph_name: str) -> dict:
             title = page.get(':block/title')
             if isinstance(title, str):
                 page_key = 'page:' + title.casefold()
-            elif ':block/title' not in page and isinstance(page.get(':block/uuid'), str):
-                # Some legacy CLI exports contain UUID-only page records with
-                # real blocks. Preserve their content rather than dropping them
-                # or aborting the entire backup. Use the full UUID for identity,
-                # and a short, visibly synthetic title for read-only viewers.
-                try:
-                    page_uuid = str(UUID(page[':block/uuid']))
-                except ValueError as exc:
-                    raise ValueError('Untitled CLI page has an invalid UUID') from exc
-                title = f'Untitled page ({page_uuid[:8]})'
-                page_key = 'page-uuid:' + page_uuid
+            elif ':block/title' not in page and normalized_uuid is not None:
+                # Retain genuinely untitled pages whose UUID does not match
+                # a known class (including all their blocks).
+                title = f'Untitled page ({normalized_uuid[:8]})'
+                page_key = 'page-uuid:' + normalized_uuid
             else:
                 raise ValueError('Non-journal page is missing title and valid UUID')
             kind = 'page'
         if page_key in seen_pages:
             raise ValueError(f'Duplicate page in CLI EDN: {page_key}')
         seen_pages.add(page_key)
-        ident, uuid = identity(page_key, page.get(':block/uuid'))
+        ident, uuid = identity(page_key, supplied_uuid)
         pages.append({
             'entityId': ident, 'uuid': uuid,
             'title': title, 'name': title.casefold(),
@@ -479,6 +524,14 @@ def compile_cli_graph(obj: dict, graph_name: str) -> dict:
             'properties': properties(prop_map),
             'blocks': [build_tree(b, page_key, (i,)) for i, b in enumerate(nodes)],
         })
+
+    # All exported pages/tags must represent distinct logical entities.
+    # Catch unrelated duplicate source UUIDs before publishing mobile JSON.
+    seen_uuids = set()
+    for page in pages:
+        if page['uuid'] in seen_uuids:
+            raise ValueError(f'Duplicate page UUID in CLI export: {page["uuid"]}')
+        seen_uuids.add(page['uuid'])
     if not pages:
         raise ValueError('CLI EDN export contains no usable pages')
     pages.sort(key=lambda p: (p['title'].casefold(), p['entityId']))
